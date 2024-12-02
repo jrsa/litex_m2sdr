@@ -9,3 +9,28 @@ had to run these by hand for some reason...
     mkdir build/litex_m2sdr_e200_eth/software/libbase
     mkdir build/litex_m2sdr_e200_eth/software/libcompiler_rt
     mkdir build/litex_m2sdr_e200_eth/software/libc
+
+also needed this in litex
+
+diff --git a/litex/soc/cores/cpu/zynq7000/core.py b/litex/soc/cores/cpu/zynq7000/core.py
+index 835364ba2..a3d59103f 100644
+--- a/litex/soc/cores/cpu/zynq7000/core.py
++++ b/litex/soc/cores/cpu/zynq7000/core.py
+@@ -60,7 +60,7 @@ class Zynq7000(CPU):
+
+         # [ 7: 0]: SPI Numbers [68:61]
+         # [15: 8]: SPI Numbers [91:84]
+-        self.interrupt      = Signal(16)
++        # self.interrupt      = Signal(16)
+
+         # # #
+
+@@ -110,7 +110,7 @@ class Zynq7000(CPU):
+             i_USB0_VBUS_PWRFAULT = 0,
+
+             # Interrupts PL -> PS.
+-            i_IRQ_F2P       = self.interrupt,
++            # i_IRQ_F2P       = self.interrupt,
+
+             # Fabric Clk / Rst.
+             o_FCLK_CLK0     = ClockSignal("ps7"),
