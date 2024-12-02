@@ -1,0 +1,11 @@
+had to run these by hand for some reason...
+    mkdir build/litex_m2sdr_e200_eth/software/bios
+    mkdir build/litex_m2sdr_e200_eth/software/liblitesata
+    mkdir build/litex_m2sdr_e200_eth/software/liblitesdcard
+    mkdir build/litex_m2sdr_e200_eth/software/libliteeth
+    mkdir build/litex_m2sdr_e200_eth/software/liblitedram
+    mkdir build/litex_m2sdr_e200_eth/software/liblitespi
+    mkdir build/litex_m2sdr_e200_eth/software/libfatfs
+    mkdir build/litex_m2sdr_e200_eth/software/libbase
+    mkdir build/litex_m2sdr_e200_eth/software/libcompiler_rt
+    mkdir build/litex_m2sdr_e200_eth/software/libc
