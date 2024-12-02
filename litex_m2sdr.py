@@ -16,10 +16,12 @@ from litex.gen import *
 
 from litex.build.generic_platform import Subsignal, Pins
 from litex_m2sdr_platform import Platform
+from litex_boards.platforms import antsdr_e200
 
 from litex.soc.interconnect.csr import *
 from litex.soc.interconnect     import stream
 
+from litex.soc.integration.soc import SoCRegion
 from litex.soc.integration.soc_core import *
 from litex.soc.integration.builder  import *
 
@@ -38,6 +40,7 @@ from litepcie.phy.s7pciephy import S7PCIEPHY
 
 from liteeth.common           import convert_ip
 from liteeth.phy.a7_1000basex import A7_1000BASEX, A7_2500BASEX
+from liteeth.phy.s7rgmii import LiteEthPHYRGMII as S7_RGMII
 from liteeth.frontend.stream  import LiteEthStream2UDPTX
 
 from litesata.phy import LiteSATAPHY
@@ -91,6 +94,23 @@ class CRG(LiteXModule):
             sata_pll.register_clkin(self.cd_sys.clk, sys_clk_freq)
             sata_pll.create_clkout(self.cd_refclk_sata, 150e6, margin=0)
 
+class E200CRG(LiteXModule):
+    def __init__(self, platform, sys_clk_freq):
+        self.rst    = Signal()
+        self.cd_sys = ClockDomain()
+        self.cd_idelay = ClockDomain()
+
+        self.comb += ClockSignal("sys").eq(ClockSignal("ps7"))
+        self.comb += ResetSignal("sys").eq(ResetSignal("ps7") | self.rst)
+
+        # create 200MHz clk for IDELAYCTRL
+        self.pll = pll = S7MMCM(speedgrade=-2)
+        pll.register_clkin(self.cd_sys.clk, 100e6)
+        pll.create_clkout(self.cd_idelay, 200e6)
+
+        self.idelayctrl = S7IDELAYCTRL(self.cd_idelay)
+    
+
 # BaseSoC ------------------------------------------------------------------------------------------
 
 class BaseSoC(SoCMini):
@@ -138,41 +158,78 @@ class BaseSoC(SoCMini):
     ):
         # Platform ---------------------------------------------------------------------------------
 
-        platform = Platform(build_multiboot=True)
-        if (with_eth or with_sata) and (variant != "baseboard"):
-            msg = "Ethernet and SATA are only supported when mounted in the LiteX Acorn Baseboard Mini! "
-            msg += "Available here: https://enjoy-digital-shop.myshopify.com/products/litex-acorn-baseboard-mini"
-            raise ValueError(msg)
+        if variant == "e200":
+            # openxc7 could work here but there is an issue with the IDELAYCTRL/IDELAY blocks used in the s7rgmii module.
+            platform = antsdr_e200.Platform(toolchain='vivado')
+
+            # zynq fabric clock is configured to this speed, insist on that for now
+            #assert sys_clk_freq == 100e6
+            sys_clk_freq = 100e6
+
+            # check various other options
+            assert not (with_pcie or with_sata)
+            #assert eth_phy == 's7rgmii'
+            eth_phy = 's7rgmii'
+
+            self.crg = E200CRG(platform, sys_clk_freq)
+        else:
+            platform = Platform(build_multiboot=True)
+            if (with_eth or with_sata) and (variant != "baseboard"):
+                msg = "Ethernet and SATA are only supported when mounted in the LiteX Acorn Baseboard Mini! "
+                msg += "Available here: https://enjoy-digital-shop.myshopify.com/products/litex-acorn-baseboard-mini"
+                raise ValueError(msg)
+
+                self.crg = CRG(platform, sys_clk_freq,
+                    with_eth  = with_eth,
+                    with_sata = with_sata,
+                ) 
+
 
         # SoCMini ----------------------------------------------------------------------------------
 
         SoCMini.__init__(self, platform, sys_clk_freq,
             ident         = f"LiteX-M2SDR SoC / {variant} variant / built on",
             ident_version = True,
+            cpu_type      = 'zynq7000' if variant == 'e200' else None,
+            with_timer      = variant == 'e200',
         )
 
-        # Clocking ---------------------------------------------------------------------------------
+        if variant == "e200":
+            # copypasta
+            self.cpu.set_ps7(name="Zynq",
+                config={
+                    **platform.ps7_config,
+                    "PCW_FPGA0_PERIPHERAL_FREQMHZ" : sys_clk_freq / 1e6,
+                })
 
-        # General.
-        self.crg = CRG(platform, sys_clk_freq,
-            with_eth  = with_eth,
-            with_sata = with_sata,
-        )
+            self.bus.add_region("sram", SoCRegion(
+                origin = self.cpu.mem_map["sram"],
+                size   = 192000)
+            )
+            #self.bus.add_region("rom", SoCRegion(
+            #    origin = self.cpu.mem_map["rom"],
+            #    size   = 256 * MEGABYTE // 8,
+            #    linker = True)
+            #)
+            self.constants["CONFIG_CLOCK_FREQUENCY"] = 666666687 # not correct for 7020
+            #self.bus.add_region("flash",  SoCRegion(origin=0xFC00_0000, size=0x4_0000, mode="rwx"))
 
         # Shared QPLL.
-        self.qpll = SharedQPLL(platform,
-            with_pcie = with_pcie,
-            with_eth  = with_eth,
-            eth_phy   = eth_phy,
-            with_sata = with_sata,
-        )
+        if variant != "e200":
+            self.qpll = SharedQPLL(platform,
+                with_pcie = with_pcie,
+                with_eth  = with_eth,
+                eth_phy   = eth_phy,
+                with_sata = with_sata,
+            )
 
-        # SI5351 Clock Generator -------------------------------------------------------------------
+        if variant in ('m2', 'baseboard',):
+            # SI5351 Clock Generator -------------------------------------------------------------------
 
-        self.si5351 = SI5351(platform, clk_in=platform.request("sync_clk_in"))
-        si5351_clk0 = platform.request("si5351_clk0")
-        platform.add_period_constraint(si5351_clk0, 1e9/38.4e6)
-        platform.add_false_path_constraints(si5351_clk0, self.crg.cd_sys.clk)
+            self.si5351 = SI5351(platform, clk_in=platform.request("sync_clk_in"))
+            si5351_clk0 = platform.request("si5351_clk0")
+            platform.add_period_constraint(si5351_clk0, 1e9/38.4e6)
+            platform.add_false_path_constraints(si5351_clk0, self.crg.cd_sys.clk)
 
         # JTAGBone ---------------------------------------------------------------------------------
 
@@ -203,10 +260,11 @@ class BaseSoC(SoCMini):
         self.dna = DNA()
         self.dna.add_timing_constraints(platform, sys_clk_freq, self.crg.cd_sys.clk)
 
-        # SPI Flash --------------------------------------------------------------------------------
-        self.flash_cs_n = GPIOOut(platform.request("flash_cs_n"))
-        self.flash      = S7SPIFlash(platform.request("flash"), sys_clk_freq, 25e6)
-        self.add_config("FLASH_IMAGE_SIZE", platform.image_size)
+        if variant in ('m2', 'baseboard',):
+            # SPI Flash --------------------------------------------------------------------------------
+            self.flash_cs_n = GPIOOut(platform.request("flash_cs_n"))
+            self.flash      = S7SPIFlash(platform.request("flash"), sys_clk_freq, 25e6)
+            self.add_config("FLASH_IMAGE_SIZE", platform.image_size)
 
         # PCIe -------------------------------------------------------------------------------------
 
@@ -252,14 +310,23 @@ class BaseSoC(SoCMini):
             eth_phy_cls = {
                 "1000basex" : A7_1000BASEX,
                 "2500basex" : A7_2500BASEX,
+                "s7rgmii"   : S7_RGMII,
             }[eth_phy]
-            self.eth_phy = eth_phy_cls(
-                qpll_channel = self.qpll.get_channel("eth"),
-                data_pads    = self.platform.request("sfp", eth_sfp),
-                sys_clk_freq = sys_clk_freq,
-                rx_polarity  = 1, # Inverted on M2SDR.
-                tx_polarity  = 0, # Inverted on M2SDR and Acorn Baseboard Mini.
-            )
+            if eth_phy.endswith('basex'):
+                self.eth_phy = eth_phy_cls(
+                    qpll_channel = self.qpll.get_channel("eth"),
+                    data_pads    = self.platform.request("sfp", eth_sfp),
+                    sys_clk_freq = sys_clk_freq,
+                    rx_polarity  = 1, # Inverted on M2SDR.
+                    tx_polarity  = 0, # Inverted on M2SDR and Acorn Baseboard Mini.
+                )
+            else:
+                self.eth_phy = eth_phy_cls(
+                    clock_pads          = self.platform.request("eth_clocks"),
+                    pads                = self.platform.request("eth"),
+                    #tx_delay            = 0e-9,
+                    with_hw_init_reset  = True,
+                )
 
             # Core + MMAP (Etherbone).
             self.add_etherbone(phy=self.eth_phy, ip_address=eth_local_ip, data_width=32, arp_entries=4)
@@ -373,7 +440,7 @@ class BaseSoC(SoCMini):
         self.clk_measurement = MultiClkMeasurement(clks={
             "clk0" : ClockSignal("sys"),
             "clk1" : 0 if not with_pcie else ClockSignal("pcie"),
-            "clk2" : si5351_clk0,
+            "clk2" : si5351_clk0 if variant != 'e200' else 0,
             "clk3" : ClockSignal("rfic"),
         })
 
@@ -427,12 +494,58 @@ class BaseSoC(SoCMini):
             csr_csv      = "analyzer.csv"
         )
 
+    # zynq7000 hackery
+    def finalize(self, *args, **kwargs):
+        super(BaseSoC, self).finalize(*args, **kwargs)
+        if self.cpu_type != "zynq7000":
+            return
+
+        libxil_path = os.path.join(self.builder.software_dir, 'libxil')
+        os.makedirs(os.path.realpath(libxil_path), exist_ok=True)
+        lib = os.path.join(libxil_path, 'embeddedsw')
+        if not os.path.exists(lib):
+            os.system("git clone --depth 1 https://github.com/Xilinx/embeddedsw {}".format(lib))
+
+        os.makedirs(os.path.realpath(self.builder.include_dir), exist_ok=True)
+        for header in [
+            'XilinxProcessorIPLib/drivers/uartps/src/xuartps_hw.h',
+            'lib/bsp/standalone/src/common/xil_types.h',
+            'lib/bsp/standalone/src/common/xil_assert.h',
+            'lib/bsp/standalone/src/common/xil_io.h',
+            'lib/bsp/standalone/src/common/xil_printf.h',
+            'lib/bsp/standalone/src/common/xstatus.h',
+            'lib/bsp/standalone/src/common/xdebug.h',
+            'lib/bsp/standalone/src/arm/cortexa9/xpseudo_asm.h',
+            'lib/bsp/standalone/src/arm/cortexa9/xreg_cortexa9.h',
+            'lib/bsp/standalone/src/arm/cortexa9/xil_cache.h',
+            'lib/bsp/standalone/src/arm/cortexa9/xparameters_ps.h',
+            'lib/bsp/standalone/src/arm/cortexa9/xil_errata.h',
+            'lib/bsp/standalone/src/arm/cortexa9/xtime_l.h',
+            'lib/bsp/standalone/src/arm/common/xil_exception.h',
+            'lib/bsp/standalone/src/arm/common/gcc/xpseudo_asm_gcc.h',
+        ]:
+            shutil.copy(os.path.join(lib, header), self.builder.include_dir)
+        write_to_file(os.path.join(self.builder.include_dir, 'bspconfig.h'),
+                      '#define FPU_HARD_FLOAT_ABI_ENABLED 1')
+        write_to_file(os.path.join(self.builder.include_dir, 'xparameters.h'), '''
+#ifndef __XPARAMETERS_H
+#define __XPARAMETERS_H
+
+#include "xparameters_ps.h"
+
+#define STDOUT_BASEADDRESS 0xE0000000
+#define XPAR_PS7_DDR_0_S_AXI_BASEADDR 0x00100000
+#define XPAR_PS7_DDR_0_S_AXI_HIGHADDR 0x1FFFFFFF
+
+#endif
+''')
+
 # Build --------------------------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description="LiteX SoC on LiteX-M2SDR.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     # Build/Load/Utilities.
-    parser.add_argument("--variant",         default="m2",        help="Design variant.", choices=["m2", "baseboard"])
+    parser.add_argument("--variant",         default="m2",        help="Design variant.", choices=["m2", "baseboard", "e200"])
     parser.add_argument("--build",           action="store_true", help="Build bitstream.")
     parser.add_argument("--load",            action="store_true", help="Load bitstream.")
     parser.add_argument("--flash",           action="store_true", help="Flash bitstream.")
@@ -505,10 +618,18 @@ def main():
         return r
 
     builder = Builder(soc, output_dir=os.path.join("build", get_build_name()), csr_csv="csr.csv")
+
+    # more hack garbage
+    if args.variant == "e200":
+        soc.builder = builder
+        builder.add_software_package('libxil')
+        builder.add_software_library('libxil')
+
     builder.build(build_name=get_build_name(), run=args.build)
 
-    # Generate LitePCIe Driver.
-    generate_litepcie_software(soc, "software", use_litepcie_software=args.driver)
+    if args.with_pcie:
+        # Generate LitePCIe Driver.
+        generate_litepcie_software(soc, "software", use_litepcie_software=args.driver)
 
     # Load Bistream.
     if args.load:
