@@ -154,7 +154,7 @@ class BaseSoC(SoCMini):
         with_eth      = False, eth_sfp=0, eth_phy="1000basex", eth_local_ip="192.168.1.50", eth_remote_ip="192.168.1.100", eth_udp_port=2345,
         with_sata     = False, sata_gen="gen2",
         with_jtagbone = True,
-        with_rfic_oversampling = True,
+        with_rfic_oversampling = False,
     ):
         # Platform ---------------------------------------------------------------------------------
 
@@ -383,6 +383,7 @@ class BaseSoC(SoCMini):
             rfic_pads    = platform.request("ad9361_rfic"),
             spi_pads     = platform.request("ad9361_spi"),
             sys_clk_freq = sys_clk_freq,
+            phy_mode = 'cmos' if variant == 'e200' else 'lvds',
         )
         self.ad9361.add_prbs()
         self.ad9361.add_agc()

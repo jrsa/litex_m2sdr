@@ -14,6 +14,7 @@ from litex.soc.interconnect.csr import *
 from litepcie.common import *
 
 from gateware.ad9361.phy     import AD9361PHY
+from gateware.ad9361.cmosphy import AD9361CMOSPHY
 from gateware.ad9361.spi     import AD9361SPIMaster
 from gateware.ad9361.bitmode import AD9361TXBitMode, AD9361RXBitMode
 from gateware.ad9361.bitmode import _sign_extend
@@ -79,7 +80,7 @@ from gateware.ad9361.agc     import AGCSaturationCount
 # AD9361 RFIC --------------------------------------------------------------------------------------
 
 class AD9361RFIC(LiteXModule):
-    def __init__(self, rfic_pads, spi_pads, sys_clk_freq):
+    def __init__(self, rfic_pads, spi_pads, sys_clk_freq, phy_mode='lvds'):
         # Controls ---------------------------------------------------------------------------------
         self.enable_datapath = Signal(reset=1)
 
@@ -147,7 +148,11 @@ class AD9361RFIC(LiteXModule):
         ]
 
         # PHY --------------------------------------------------------------------------------------
-        self.phy = AD9361PHY(rfic_pads)
+        phy_cls = {
+            'lvds': AD9361PHY,
+            'cmos': AD9361CMOSPHY,
+        }[phy_mode]
+        self.phy = phy_cls(rfic_pads)
 
         # Cross domain crossing --------------------------------------------------------------------
         self.tx_cdc = tx_cdc = stream.ClockDomainCrossing(
