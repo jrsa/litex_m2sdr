@@ -331,15 +331,17 @@ class BaseSoC(SoCMini):
             # Core + MMAP (Etherbone).
             self.add_etherbone(phy=self.eth_phy, ip_address=eth_local_ip, data_width=32, arp_entries=4)
 
-            # UDP Streamer RX.
-            eth_streamer_port = self.ethcore_etherbone.udp.crossbar.get_port(eth_udp_port, dw=64, cd="sys")
-            self.eth_streamer = LiteEthStream2UDPTX(
-                ip_address = convert_ip(eth_remote_ip),
-                udp_port   = eth_udp_port,
-                fifo_depth = 1024//8,
-                data_width = 64,
-            )
-            self.comb += self.eth_streamer.source.connect(eth_streamer_port.sink)
+            # seems to make etherbone etc not work
+            if False:
+                # UDP Streamer RX.
+                eth_streamer_port = self.ethcore_etherbone.udp.crossbar.get_port(eth_udp_port, dw=64, cd="sys")
+                self.eth_streamer = LiteEthStream2UDPTX(
+                    ip_address = convert_ip(eth_remote_ip),
+                    udp_port   = eth_udp_port,
+                    fifo_depth = 1024//8,
+                    data_width = 64,
+                )
+                self.comb += self.eth_streamer.source.connect(eth_streamer_port.sink)
 
             # UDP Streamer TX.
             # TODO.
@@ -432,7 +434,8 @@ class BaseSoC(SoCMini):
         if with_pcie:
             self.comb += self.crossbar.demux.source0.connect(self.pcie_dma0.sink)
         if with_eth:
-            self.comb += self.crossbar.demux.source1.connect(self.eth_streamer.sink)
+            if False:
+                self.comb += self.crossbar.demux.source1.connect(self.eth_streamer.sink)
         if with_sata:
             pass # TODO.
 
@@ -618,7 +621,7 @@ def main():
             r += f"_eth"
         return r
 
-    builder = Builder(soc, output_dir=os.path.join("build", get_build_name()), csr_csv="csr.csv")
+    builder = Builder(soc, output_dir=os.path.join("build", get_build_name()))
 
     # more hack garbage
     if args.variant == "e200":
