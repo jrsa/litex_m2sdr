@@ -39,7 +39,7 @@ if __name__ == "__main__":
         # from software/user/libm2sdr/m2sdr_ad9361_spi.c / m2sdr_ad9361_spi_init()
         bus.regs.ad9361_config.write(0)
         sleep(0.001)
-        bus.regs.ad9361_config.write(2)
+        bus.regs.ad9361_config.write(3)
         sleep(0.001)
 
         # read 0x10 (data port configuration)
@@ -62,7 +62,7 @@ if __name__ == "__main__":
             sleep(0.1)
 
         # read 
-        reg_val = bus.regs.ad9361_spi_miso.read()
+        reg_val = bus.regs.ad9361_spi_miso.read() & 0xff
         print(f'reg {hex(reg)} value: {hex(reg_val)}')
 
     bus.close()
